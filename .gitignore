@@ -1,2 +1,3 @@
 *.pyc
 text_analyzer/text.txt
+/cow/target
