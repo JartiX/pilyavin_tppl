@@ -1,0 +1,21 @@
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO 
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO 
+                                            c1v44 : ASCII code of comma
+moO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO 
+MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+                                            c2v32 : ASCII code of space
+moO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO MoO
+                                            c3v11 : quantity of numbers to be calculated
+moO                                         c4v0  : zeroth Fibonacci number (will not be printed)
+moO MoO                                     c5v1  : first Fibonacci number
+mOo mOo                                     c3    : loop counter
+MOO                                         block : loop to print (i)th number and calculate next one
+moO moO OOM                                 c5    : the number to be printed
+mOo mOo mOo mOo Moo moO Moo                 c1c2  : print comma and space
+                                            block : actually calculate next Fibonacci in c6
+moO moO MOO moO moO MoO mOo mOo MOo moo     c4v0  : move c4 to c6 (don't need to preserve it)
+moO MOO moO MoO mOo mOo MoO moO MOo moo     c5v0  : move c5 to c6 and c4 (need to preserve it)
+moO MOO mOo MoO moO MOo moo                 c6v0  : move c6 with sum to c5
+mOo mOo mOo MOo                             c3    : decrement loop counter
+moo 
+mOo mOo MoO MoO Moo Moo Moo                 c1    : output three dots
