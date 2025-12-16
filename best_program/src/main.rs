@@ -6,6 +6,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use std::fs::OpenOptions;
 use std::io::BufWriter;
+use std::sync::atomic::{AtomicBool, Ordering};
+use ctrlc;
 
 const KEY: &[u8] = b"isu_pt";
 const GET_CMD: &[u8] = b"get";
@@ -122,11 +124,12 @@ fn data_collection_loop(
     server_name: &str,
     writer: &Arc<Mutex<BufWriter<std::fs::File>>>,
     stats: &Arc<Mutex<(u64, u64)>>, // (server1_count, server2_count)
+    running: &AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut packet_count = 0u64;
     let mut error_count = 0u64;
     
-    loop {
+    while running.load(Ordering::SeqCst) {
         let result = if is_server1 {
             fetch_server1_data(stream)
         } else {
@@ -194,6 +197,9 @@ fn data_collection_loop(
             }
         }
     }
+    
+    // Ok при корректном завершении по Ctrl+C
+    Ok(())
 }
 
 fn worker_thread(
@@ -201,6 +207,7 @@ fn worker_thread(
     is_server1: bool,
     writer: Arc<Mutex<BufWriter<std::fs::File>>>,
     stats: Arc<Mutex<(u64, u64)>>,
+    running: Arc<AtomicBool>,
 ) {
     let server_name = if is_server1 { "Server1" } else { "Server2" };
     let mut reconnect_delay = Duration::from_secs(1);
@@ -209,7 +216,7 @@ fn worker_thread(
     
     println!("[{}] Worker thread started", server_name);
 
-    loop {
+    while running.load(Ordering::SeqCst) {
         match connect_and_auth(server, server_name) {
             Ok(mut stream) => {
                 if total_reconnects > 0 {
@@ -220,9 +227,11 @@ fn worker_thread(
                 reconnect_delay = Duration::from_secs(1);
                 
                 // Начинаем сбор данных
-                match data_collection_loop(&mut stream, is_server1, server_name, &writer, &stats) {
+                match data_collection_loop(&mut stream, is_server1, server_name, &writer, &stats, &running) {
                     Ok(_) => {
-                        println!("[{}] Data collection ended normally", server_name);
+                        // Нормальное завершение из-за Ctrl+C
+                        println!("[{}] Data collection loop ended gracefully", server_name);
+                        break;
                     }
                     Err(e) => {
                         eprintln!("[{}] ✗ Connection lost: {}", server_name, e);
@@ -238,10 +247,21 @@ fn worker_thread(
             }
         } 
         
-        println!("[{}] Waiting {:?} before reconnection attempt...", server_name, reconnect_delay);
-        thread::sleep(reconnect_delay);
-        reconnect_delay = std::cmp::min(reconnect_delay * 2, max_delay);
+        // Если Ctrl+C не нажат, пытаемся переподключиться
+        if running.load(Ordering::SeqCst) {
+            println!("[{}] Waiting {:?} before reconnection attempt...", server_name, reconnect_delay);
+            
+            let mut elapsed = Duration::ZERO;
+            while elapsed < reconnect_delay && running.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(100));
+                elapsed += Duration::from_millis(100);
+            }
+            
+            reconnect_delay = std::cmp::min(reconnect_delay * 2, max_delay);
+        }
     }
+    
+    println!("[{}] Worker thread finished", server_name);
 }
 
 fn main() {
@@ -251,6 +271,15 @@ fn main() {
     println!("Server 2: {} (Accelerometer)", SERVER2);
     println!("Output file: {}", OUTPUT_FILE);
 
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+        eprintln!("\n[INFO] Ctrl+C received. Attempting graceful shutdown...");
+    })
+    .expect("Error setting Ctrl-C handler");
+    
     println!("Press Ctrl+C to stop");
     
     let file = OpenOptions::new()
@@ -265,24 +294,27 @@ fn main() {
     // Запускаем поток для Server 1
     let writer1 = Arc::clone(&writer);
     let stats1 = Arc::clone(&stats);
+    let running1 = Arc::clone(&running);
     let handle1 = thread::spawn(move || {
-        worker_thread(SERVER1, true, writer1, stats1);
+        worker_thread(SERVER1, true, writer1, stats1, running1);
     });
     
     // Запускаем поток для Server 2
     let writer2 = Arc::clone(&writer);
     let stats2 = Arc::clone(&stats);
+    let running2 = Arc::clone(&running);
     let handle2 = thread::spawn(move || {
-        worker_thread(SERVER2, false, writer2, stats2);
+        worker_thread(SERVER2, false, writer2, stats2, running2);
     });
     
     // Поток для периодической записи буфера на диск и вывода статистики
     let writer3 = Arc::clone(&writer);
     let stats3 = Arc::clone(&stats);
-    thread::spawn(move || {
-        loop {
+    let running3 = Arc::clone(&running);
+    let handle3 = thread::spawn(move || {
+        while running3.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_secs(10));
-            
+
             // Сброс буфера на диск
             if let Ok(mut w) = writer3.lock() {
                 if let Err(e) = w.flush() {
@@ -295,8 +327,18 @@ fn main() {
                 println!("\n[STATS] Server1: {} packets | Server2: {} packets", s.0, s.1);
             }
         }
+        
+        // Финальный сброс буфера при завершении
+        if let Ok(mut w) = writer3.lock() {
+            if let Err(e) = w.flush() {
+                eprintln!("✗ Final Flush error: {}", e);
+            }
+        }
     });
     
     handle1.join().unwrap();
     handle2.join().unwrap();
+    handle3.join().unwrap();
+    
+    println!("\n[INFO] All threads finished. Logger stopped gracefully.");
 }
