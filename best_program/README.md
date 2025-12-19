@@ -1,7 +1,12 @@
 # Stable data collector
 
-# Run
+# Run program
 
 ```
 cargo run
+```
+
+## Run tests
+```bash
+cargo tarpaulin --out Html --output-dir coverage
 ```
